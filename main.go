@@ -10,6 +10,7 @@ import (
     "os/signal"
     "runtime"
     "syscall"
+    "time"
 
     "golang.org/x/sys/unix"
 
@@ -124,12 +125,31 @@ func checkErr(err error, msg string, args ...interface{}) {
 }
 
 func main() {
-    runtime.GOMAXPROCS(1)
+    cmdDoneCh := make(chan struct{}, 1)
     sigCh := make(chan os.Signal, 1)
     signal.Notify(sigCh, syscall.SIGINT)
     signal.Notify(sigCh, syscall.SIGTERM)
 
     flag.Parse()
+
+    if len(flag.Args()) > 0 {
+        //create process in new user and network namespace
+        var args []string
+        args = append(args, "--map-root-user", "--net")
+        args = append(args, flag.Args()...)
+        cmd := exec.Command("unshare", args...)
+        cmd.Stdin = os.Stdin
+        cmd.Stdout = os.Stdout
+        cmd.Stderr = os.Stderr
+        checkErr(cmd.Start(), "[!] Unable to start process")
+        go func() {
+            cmd.Wait()
+            cmdDoneCh<- struct{}{}
+        }()
+        *targetPid = cmd.Process.Pid
+        //give it time to enter the new namespaces
+        time.Sleep(500 * time.Millisecond)
+    }
 
     fd, mtu := getTunDevice()
 
@@ -144,5 +164,10 @@ func main() {
     checkErr(err, "[!] Unable to create stack")
 
     log.Infof("Started!")
-    <-sigCh
+    select {
+    case <-sigCh:
+        break;
+    case <-cmdDoneCh:
+        break;
+    }
 }
