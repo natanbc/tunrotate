@@ -113,29 +113,26 @@ static void send_tun_mtu(int sock, int tun, int mtu) {
     check(sendmsg(sock, &msg, 0), "Unable to send fd/mtu pair");
 }
 
-static void do_tun(int pid, const char* name, const char* socket_path) {
-    int sock = connect_parent(socket_path);
-
+static void do_tun(int pid, const char* name, int socket_fd) {
     int tun, mtu;
     create_tun(pid, name, &tun, &mtu);
  
-    send_tun_mtu(sock, tun, mtu);
-    close(sock);
+    send_tun_mtu(socket_fd, tun, mtu);
+    close(socket_fd);
     close(tun);
 }
 
-static void do_wait(const char* pipe_path, char* const* argv) {
-    int pipe = open(pipe_path, O_RDONLY);
+static void do_wait(int pipe_fd, char* const* argv) {
     char buf[128];
-    int r = read(pipe, buf, sizeof buf);
-    close(pipe);
+    int r = read(pipe_fd, buf, sizeof buf);
+    close(pipe_fd);
     execvp(argv[0], argv);
 }
 
 static void usage(const char* name) {
     fprintf(stderr, "usage:\n");
-    fprintf(stderr, "    %s tun  <pid> <tun name> <path to unix socket>\n", name);
-    fprintf(stderr, "    %s wait <path to pipe> <target program> [args]\n", name);
+    fprintf(stderr, "    %s tun  <pid> <tun name> <socket fd>\n", name);
+    fprintf(stderr, "    %s wait <pipe fd> <target program> [args]\n", name);
     fflush(stderr);
     exit(1);
 }
@@ -146,10 +143,10 @@ int main(int argc, char* argv[]) {
     }
     if(strcmp(argv[1], "tun") == 0) {
         if(argc != 5) usage(argv[0]);
-        do_tun(atoi(argv[2]), argv[3], argv[4]);
+        do_tun(atoi(argv[2]), argv[3], atoi(argv[4]));
     } else if(strcmp(argv[1], "wait") == 0) {
         if(argc < 4) usage(argv[0]);
-        do_wait(argv[2], &argv[3]);
+        do_wait(atoi(argv[2]), &argv[3]);
     } else {
         usage(argv[0]);
     }

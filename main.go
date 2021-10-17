@@ -10,6 +10,7 @@ import (
     "os/signal"
     "runtime"
     "strings"
+    "sync"
     "syscall"
     "time"
 
@@ -53,22 +54,31 @@ func getTunDevice() (int, uint32) {
     if *targetPid != 0 {
         log.Infof("Using tunopen on pid %d", *targetPid)
 
-        path := "/tmp/tun.sock"
-        syscall.Unlink(path)
-        addr, err := net.ResolveUnixAddr("unix", path)
-        checkErr(err, "[!] Unable to resolve unix socket address")
-        ul, err := net.ListenUnix("unix", addr)
-        checkErr(err, "[!] Unable to listen on unix socket")
-        checkErr(os.Chmod(path, 0700), "[!] Unable to chmod unix socket")
+        sockFds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM|syscall.SOCK_NONBLOCK, 0);
+        checkErr(err, "[!] Unable to create socket pair")
 
-        cmd := exec.Command("./tunopen/tunopen", "tun", fmt.Sprintf("%d", *targetPid), *tunDevice, path)
+        parentSocket := os.NewFile(uintptr(sockFds[0]), "sockerpair/parent")
+        childSocket  := os.NewFile(uintptr(sockFds[1]), "sockerpair/child")
+
+        cmd := exec.Command("./tunopen/tunopen", "tun", fmt.Sprintf("%d", *targetPid), *tunDevice, "3")
         cmd.Stdin = nil
         cmd.Stdout = nil
         cmd.Stderr = os.Stderr
+        cmd.ExtraFiles = []*os.File { childSocket }
         checkErr(cmd.Start(), "[!] Unable to start tunopen helper process")
 
-        uc, err := ul.AcceptUnix()
-        checkErr(err, "[!] Unable to accept unix connection")
+        wg := sync.WaitGroup {}
+        wg.Add(1)
+
+        //separate goroutine so tunopen errors get caught and the process exits
+        go func() {
+            checkErr(cmd.Wait(), "[!] tunopen error")
+            wg.Done()
+        }()
+
+        fc, err := net.FileConn(parentSocket)
+        checkErr(err, "[!] Unable to create FileConn")
+        uc := fc.(*net.UnixConn)
 
         msg, oob := make([]byte, 4), make([]byte, 128)
         _, oobn, _, _, err := uc.ReadMsgUnix(msg, oob)
@@ -81,14 +91,14 @@ func getTunDevice() (int, uint32) {
         checkErr(err, "[!] Unable to parse unix rights")
 
         uc.Close()
-        ul.Close()
-        syscall.Unlink(path)
 
         fd := fds[0]
         mtu := binary.LittleEndian.Uint32(msg)
         checkErr(unix.SetNonblock(fd, true), "[!] Unable to set tun device in non blocking mode")
 
-        checkErr(cmd.Wait(), "[!] tunopen error")
+        //wait for tunopen to finish
+        wg.Wait()
+
 
         return fd, mtu
     }
@@ -149,7 +159,7 @@ func main() {
         //create process in new user and network namespace
         var args []string
         args = append(args, "--map-root-user", "--net")
-        args = append(args, "./tunopen/tunopen", "wait", "/proc/self/fd/3")
+        args = append(args, "./tunopen/tunopen", "wait", "3")
         args = append(args, flag.Args()...)
         cmd := exec.Command("unshare", args...)
         cmd.Stdin = os.Stdin
