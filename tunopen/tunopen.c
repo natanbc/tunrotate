@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <linux/if.h>
 #include <linux/if_tun.h>
+#include <linux/netlink.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,7 +24,7 @@ static int check(int v, const char* msg) {
     return v;
 }
 
-static void create_tun(int target_pid, const char* name, int* tun, int* mtu) {
+static void create_tun(int target_pid, const char* name, int* tun, int* mtu, int* netlink) {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
 
@@ -58,6 +59,8 @@ static void create_tun(int target_pid, const char* name, int* tun, int* mtu) {
     close(sock);
     *mtu = ifr.ifr_mtu;
 
+    *netlink = check(socket(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE), "Unable to create netlink socket");
+
     // doing it with rtentry didn't work because why would it
     sprintf(buf, "ip addr add 10.0.0.2/24 dev %s", name);
     system(buf);
@@ -84,7 +87,7 @@ static int connect_parent(const char* socket_path) {
     return sock;
 }
 
-static void send_tun_mtu(int sock, int tun, int mtu) {
+static void send_fds(int sock, int tun, int mtu, int netlink) {
     struct iovec iov = {
         .iov_base = &mtu,
         .iov_len = sizeof(mtu),
@@ -106,18 +109,22 @@ static void send_tun_mtu(int sock, int tun, int mtu) {
     *cmsg = (struct cmsghdr) {
         .cmsg_level = SOL_SOCKET,
         .cmsg_type = SCM_RIGHTS,
-        .cmsg_len = CMSG_LEN(sizeof(tun))
+        .cmsg_len = CMSG_LEN(sizeof(tun) + sizeof(netlink))
     };
 
-    memcpy(CMSG_DATA(cmsg), &tun, sizeof(tun));
+    char* ptr = (char*)CMSG_DATA(cmsg);
+    memcpy(ptr, &tun, sizeof(tun));
+    ptr += sizeof(tun);
+    memcpy(ptr, &netlink, sizeof(netlink));
+
     check(sendmsg(sock, &msg, 0), "Unable to send fd/mtu pair");
 }
 
 static void do_tun(int pid, const char* name, int socket_fd) {
-    int tun, mtu;
-    create_tun(pid, name, &tun, &mtu);
+    int tun, mtu, netlink;
+    create_tun(pid, name, &tun, &mtu, &netlink);
  
-    send_tun_mtu(socket_fd, tun, mtu);
+    send_fds(socket_fd, tun, mtu, netlink);
     close(socket_fd);
     close(tun);
 }

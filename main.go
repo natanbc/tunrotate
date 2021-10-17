@@ -50,7 +50,8 @@ func enterNetNS(path string) (func(), error) {
     }, nil
 }
 
-func getTunDevice() (int, uint32) {
+//returns (tun, mtu, netlink)
+func getTunDevice() (int, uint32, int) {
     if *targetPid != 0 {
         log.Infof("Using tunopen on pid %d", *targetPid)
 
@@ -93,6 +94,7 @@ func getTunDevice() (int, uint32) {
         uc.Close()
 
         fd := fds[0]
+        netlinkFd := fds[1]
         mtu := binary.LittleEndian.Uint32(msg)
         checkErr(unix.SetNonblock(fd, true), "[!] Unable to set tun device in non blocking mode")
 
@@ -100,7 +102,7 @@ func getTunDevice() (int, uint32) {
         wg.Wait()
 
 
-        return fd, mtu
+        return fd, mtu, netlinkFd
     }
 
     var restore func()
@@ -118,12 +120,15 @@ func getTunDevice() (int, uint32) {
     checkErr(err, "[!] GetMTU(%s)", *tunDevice)
     log.Infof("MTU(%s) = %v", *tunDevice, mtu)
 
+    netlinkFd, err := syscall.Socket(syscall.AF_NETLINK, syscall.SOCK_DGRAM, syscall.NETLINK_ROUTE)
+    checkErr(err, "[!] Unable to open netlink socket")
+
     if *netNsPath != "" {
         log.Infof("Restoring root netns")
         restore()
     }
 
-    return fd, mtu
+    return fd, mtu, netlinkFd
 }
 
 func checkErr(err error, msg string, args ...interface{}) {
@@ -184,7 +189,7 @@ func main() {
         time.Sleep(500 * time.Millisecond)
     }
 
-    fd, mtu := getTunDevice()
+    fd, mtu, _ := getTunDevice()
 
     ep, err := fdbased.New(&fdbased.Options {
         MTU: mtu,
