@@ -12,6 +12,8 @@ import (
 )
 
 const bufferSize = 20 << 10;
+const connectTimeout = 5 * time.Second
+const waitTimeout = 5 * time.Second
 
 var buffers = sync.Pool {
     New: func() interface {} {
@@ -40,7 +42,7 @@ func handleTCP(localConn TCPConnection) {
 }
 
 func dial(ip net.IP, port uint16) (net.Conn, error) {
-    ctx, cancel := context.WithTimeout(context.Background(), 5 * time.Second)
+    ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
     defer cancel()
     return DialTCP(ctx, ip, port)
 }
@@ -56,7 +58,7 @@ func relay(left, right net.Conn) {
 
         io.CopyBuffer(right, left, buf)
 
-        right.SetReadDeadline(time.Now().Add(5 * time.Second))
+        right.SetReadDeadline(time.Now().Add(waitTimeout))
     }()
 
     go func() {
@@ -66,7 +68,7 @@ func relay(left, right net.Conn) {
 
         io.CopyBuffer(left, right, buf)
 
-        left.SetReadDeadline(time.Now().Add(5 * time.Second))
+        left.SetReadDeadline(time.Now().Add(waitTimeout))
     }()
 
     wg.Wait()
