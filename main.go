@@ -61,7 +61,7 @@ func getTunDevice() (int, uint32, int) {
         parentSocket := os.NewFile(uintptr(sockFds[0]), "sockerpair/parent")
         childSocket  := os.NewFile(uintptr(sockFds[1]), "sockerpair/child")
 
-        cmd := exec.Command("./tunopen/tunopen", "tun", fmt.Sprintf("%d", *targetPid), *tunDevice, "3")
+        cmd := exec.Command("./tunhelper/tunhelper", "tun", fmt.Sprintf("%d", *targetPid), *tunDevice, "3")
         cmd.Stdin = nil
         cmd.Stdout = nil
         cmd.Stderr = os.Stderr
@@ -167,7 +167,7 @@ func main() {
         var args []string
         args = append(args, "unshare", "3", "4")
         args = append(args, flag.Args()...)
-        cmd := exec.Command("./tunopen/tunopen", args...)
+        cmd := exec.Command("./tunhelper/tunhelper", args...)
         cmd.Stdin = os.Stdin
         cmd.Stdout = os.Stdout
         cmd.Stderr = os.Stderr

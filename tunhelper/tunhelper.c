@@ -70,23 +70,6 @@ static void create_tun(int target_pid, const char* name, int* tun, int* mtu, int
     system(buf);
 }
 
-static int connect_parent(const char* socket_path) {
-    struct sockaddr_un addr = {
-        .sun_family = AF_UNIX,
-    };
-    size_t path_len = strlen(socket_path);
-    if(path_len > sizeof(addr.sun_path)) {
-        fprintf(stderr, "unix socket path (%s) exceeds max path length (%zu)\n", socket_path, sizeof(addr.sun_path));
-        fflush(stderr);
-        exit(1);
-    }
-    memcpy(addr.sun_path, socket_path, path_len);
-
-    int sock = check(socket(AF_UNIX, SOCK_STREAM, 0), "Unable to create unix socket");
-    check(connect(sock, (struct sockaddr*) &addr, sizeof(addr)), "Unable to connect to unix socket");
-    return sock;
-}
-
 static void send_fds(int sock, int tun, int mtu, int netlink) {
     struct iovec iov = {
         .iov_base = &mtu,
