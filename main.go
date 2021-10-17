@@ -9,6 +9,7 @@ import (
     "os/exec"
     "os/signal"
     "runtime"
+    "strings"
     "syscall"
     "time"
 
@@ -26,10 +27,10 @@ import (
 )
 
 var (
-    debug     = flag.Bool("debug", false, "enable debug logging")
+    logLevel  = flag.String("loglevel", "info", "Log level [debug|info|warn]")
     netNsPath = flag.String("netns", "", "path to network namespace (/run/netns/{name} or /proc/{pid}/ns/net). Needs root privileges")
-    tunDevice = flag.String("tun-device", "tun0", "tun device to use")
     targetPid = flag.Int("pid", 0, "pid of a process in the wanted network namespace. Does not need root privileges")
+    tunDevice = flag.String("tun-device", "tun0", "tun device to use")
 )
 
 func enterNetNS(path string) (func(), error) {
@@ -131,6 +132,15 @@ func main() {
     signal.Notify(sigCh, syscall.SIGTERM)
 
     flag.Parse()
+
+    switch strings.ToLower(*logLevel) {
+    case "warn":  log.SetLevel(log.Warning)
+    case "info":  log.SetLevel(log.Info)
+    case "debug": log.SetLevel(log.Debug)
+    default:
+        fmt.Fprintf(os.Stderr, "[!] Invalid log level: %s", *logLevel)
+        os.Exit(1)
+    }
 
     if len(flag.Args()) > 0 {
         //create process in new user and network namespace
