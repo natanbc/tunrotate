@@ -158,24 +158,29 @@ func main() {
     }
 
     if len(flag.Args()) > 0 {
-        readPipe, writePipe, err := os.Pipe()
+        unshareReadPipe, unshareWritePipe, err := os.Pipe()
+        checkErr(err, "[!] Failed to create unshare pipe")
+        waitReadPipe, waitWritePipe, err := os.Pipe()
         checkErr(err, "[!] Failed to create wait pipe")
 
         //create process in new user and network namespace
         var args []string
-        args = append(args, "--map-root-user", "--net")
-        args = append(args, "./tunopen/tunopen", "wait", "3")
+        args = append(args, "unshare", "3", "4")
         args = append(args, flag.Args()...)
-        cmd := exec.Command("unshare", args...)
+        cmd := exec.Command("./tunopen/tunopen", args...)
         cmd.Stdin = os.Stdin
         cmd.Stdout = os.Stdout
         cmd.Stderr = os.Stderr
-        cmd.ExtraFiles = []*os.File { readPipe }
+        cmd.ExtraFiles = []*os.File { unshareWritePipe, waitReadPipe }
         checkErr(cmd.Start(), "[!] Unable to start process")
+
+        _, err = unshareReadPipe.Read(make([]byte, 16))
+        checkErr(err, "[!] Unable to read from unshare pipe")
+
         go func() {
             <-setupDone
-            writePipe.Write([]byte{0})
-            writePipe.Close()
+            waitWritePipe.Write([]byte{0})
+            waitWritePipe.Close()
 
             cmd.Wait()
 

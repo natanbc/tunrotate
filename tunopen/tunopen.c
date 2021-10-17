@@ -129,17 +129,51 @@ static void do_tun(int pid, const char* name, int socket_fd) {
     close(tun);
 }
 
-static void do_wait(int pipe_fd, char* const* argv) {
+static void write_str(int fd, const char* str, const char* err) {
+    int len = strlen(str);
+    if(check(write(fd, str, len), err) != len) check(-1, err);
+}
+
+static void map_id(const char* path, int from, int to) {
+    int fd = check(open(path, O_WRONLY), "Failed to open file for mapping ids");
+
     char buf[128];
-    int r = read(pipe_fd, buf, sizeof buf);
-    close(pipe_fd);
+    sprintf(buf, "%d %d 1", from, to);
+    write_str(fd, buf, "Failed to write id map");
+
+    close(fd);
+}
+
+static void setgroups_deny() {
+    int fd = check(open("/proc/self/setgroups", O_WRONLY), "Failed to open setgroups");
+    write_str(fd, "deny", "Failed to write to setgroups");
+    close(fd);
+}
+
+static void do_unshare(int unshared_fd, int wait_fd, char* const* argv) {
+    uid_t real_euid = geteuid();
+    gid_t real_egid = getegid();
+
+    check(unshare(CLONE_NEWUSER | CLONE_NEWNET), "Failed to unshare");
+
+    map_id("/proc/self/uid_map", 0, real_euid);
+    setgroups_deny();
+    map_id("/proc/self/gid_map", 0, real_egid);
+
+    check(write(unshared_fd, "ok\n", 3), "Failed to write to unshared pipe");
+    close(unshared_fd);
+
+    char buf[128];
+    check(read(wait_fd, buf, sizeof buf), "Failed to read from wait pipe");
+    close(wait_fd);
+
     execvp(argv[0], argv);
 }
 
 static void usage(const char* name) {
     fprintf(stderr, "usage:\n");
-    fprintf(stderr, "    %s tun  <pid> <tun name> <socket fd>\n", name);
-    fprintf(stderr, "    %s wait <pipe fd> <target program> [args]\n", name);
+    fprintf(stderr, "    %s tun     <pid> <tun name> <socket fd>\n", name);
+    fprintf(stderr, "    %s unshare <unshare fd> <wait fd> <target program> [args]\n", name);
     fflush(stderr);
     exit(1);
 }
@@ -151,9 +185,9 @@ int main(int argc, char* argv[]) {
     if(strcmp(argv[1], "tun") == 0) {
         if(argc != 5) usage(argv[0]);
         do_tun(atoi(argv[2]), argv[3], atoi(argv[4]));
-    } else if(strcmp(argv[1], "wait") == 0) {
+    } else if(strcmp(argv[1], "unshare") == 0) {
         if(argc < 4) usage(argv[0]);
-        do_wait(atoi(argv[2]), &argv[3]);
+        do_unshare(atoi(argv[2]), atoi(argv[3]), &argv[4]);
     } else {
         usage(argv[0]);
     }
