@@ -7,7 +7,6 @@ import (
     "gvisor.dev/gvisor/pkg/log"
     "gvisor.dev/gvisor/pkg/tcpip"
     "gvisor.dev/gvisor/pkg/tcpip/adapters/gonet"
-    "gvisor.dev/gvisor/pkg/tcpip/buffer"
     "gvisor.dev/gvisor/pkg/tcpip/header"
     "gvisor.dev/gvisor/pkg/tcpip/network/ipv4"
     "gvisor.dev/gvisor/pkg/tcpip/network/ipv6"
@@ -67,32 +66,24 @@ func New(ep stack.LinkEndpoint) (*Stack, error) {
     })
     s.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpForwarder.HandlePacket)
 
-    udpHandlePacket := func(id stack.TransportEndpointID, pkt *stack.PacketBuffer) bool {
+    udpForwarder := udp.NewForwarder(s.Stack, func(r *udp.ForwarderRequest) {
+        var wq waiter.Queue
+        id := r.ID()
         log.Debugf("udp packet: %v", id)
 
-        udpHdr := header.UDP(pkt.TransportHeader().View())
-        if int(udpHdr.Length()) > pkt.Data().Size() + header.UDPMinimumSize {
-            return true
+        ep, err := r.CreateEndpoint(&wq)
+        if err != nil {
+            log.Warningf("unable to create udp endpoint: %v", err)
+            return
         }
 
-        if !verifyChecksum(udpHdr, pkt) {
-            return true
+        connection := &udpConnection {
+            Conn: gonet.NewUDPConn(s.Stack, &wq, ep),
+            id:   &id,
         }
-
-        packet := &udpPacket {
-            s:        s,
-            id:       &id,
-            data:     pkt.Data().ExtractVV(),
-            nicID:    pkt.NICID,
-            netHdr:   pkt.Network(),
-            netProto: pkt.NetworkProtocolNumber,
-        }
-
-        conn.SendUDP(packet)
-
-        return true
-    }
-    s.SetTransportProtocolHandler(udp.ProtocolNumber, udpHandlePacket)
+        conn.NewUDP(connection)
+    })
+    s.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)
 
     if err := s.CreateNIC(s.nicID, ep); err != nil {
         return nil, fmt.Errorf("Unable to create NIC: %s", err)
@@ -116,115 +107,12 @@ func (c *tcpConnection) ID() *stack.TransportEndpointID {
 	return c.id
 }
 
-type udpPacket struct {
-    s        *Stack
-    id       *stack.TransportEndpointID
-    data     buffer.VectorisedView
-    nicID    tcpip.NICID
-    netHdr   header.Network
-    netProto tcpip.NetworkProtocolNumber
+type udpConnection struct {
+    net.Conn
+    id *stack.TransportEndpointID
 }
 
-func (p *udpPacket) Data() []byte {
-    return p.data.ToView()
-}
-
-func (p *udpPacket) Drop() {}
-
-func (p *udpPacket) ID() *stack.TransportEndpointID {
-    return p.id
-}
-
-func (p *udpPacket) LocalAddr() net.Addr {
-    return &net.UDPAddr {
-        IP: net.IP(p.id.LocalAddress),
-        Port: int(p.id.LocalPort),
-    }
-}
-
-func (p *udpPacket) RemoteAddr() net.Addr {
-    return &net.UDPAddr {
-        IP: net.IP(p.id.RemoteAddress),
-        Port: int(p.id.RemotePort),
-    }
-}
-
-func (p *udpPacket) WriteBack(b []byte, addr net.Addr) (int, error) {
-    v := buffer.View(b)
-    if len(v) > header.UDPMaximumPacketSize {
-        return -1, fmt.Errorf("%s", &tcpip.ErrMessageTooLong{})
-    }
-
-    var localAddress tcpip.Address
-    var localPort uint16
-
-    if udpAddr, ok := addr.(*net.UDPAddr); !ok {
-        localAddress = p.netHdr.DestinationAddress()
-        localPort = p.id.LocalPort
-    } else if ipv4 := udpAddr.IP.To4(); ipv4 != nil {
-        localAddress = tcpip.Address(ipv4)
-        localPort = uint16(udpAddr.Port)
-    } else {
-        localAddress = tcpip.Address(udpAddr.IP)
-        localPort = uint16(udpAddr.Port)
-    }
-
-    route, err := p.s.FindRoute(p.nicID, localAddress, p.netHdr.SourceAddress(), p.netProto, false)
-    if err != nil {
-        return -1, fmt.Errorf("%#v no route: %s", p.id, err)
-    }
-    defer route.Release()
-
-    data := v.ToVectorisedView()
-    if err = sendUDP(route, data, localPort, p.id.RemotePort, true /* no checksum */); err != nil {
-        return -1, fmt.Errorf("failed to send udp packet: %v", err)
-    }
-
-    return data.Size(), nil
-}
-
-func sendUDP(r *stack.Route, data buffer.VectorisedView, localPort, remotePort uint16, noChecksum bool) tcpip.Error {
-    pkt := stack.NewPacketBuffer(stack.PacketBufferOptions {
-        ReserveHeaderBytes: header.UDPMinimumSize + int(r.MaxHeaderLength()),
-        Data:               data,
-    })
-
-    udpHdr := header.UDP(pkt.TransportHeader().Push(header.UDPMinimumSize))
-    pkt.TransportProtocolNumber = udp.ProtocolNumber
-
-    length := uint16(pkt.Size())
-    udpHdr.Encode(&header.UDPFields {
-        SrcPort: localPort,
-        DstPort: remotePort,
-        Length:  length,
-    })
-
-    if r.RequiresTXTransportChecksum() && (!noChecksum || r.NetProto() == header.IPv6ProtocolNumber) {
-        checksum := r.PseudoHeaderChecksum(udp.ProtocolNumber, length)
-        for _, v := range data.Views() {
-            checksum = header.Checksum(v, checksum)
-        }
-        udpHdr.SetChecksum(^udpHdr.CalculateChecksum(checksum))
-    }
-
-    ttl := r.DefaultTTL()
-
-    return r.WritePacket(stack.NetworkHeaderParams {
-        Protocol: udp.ProtocolNumber,
-        TTL:      ttl,
-        TOS:      0,
-    }, pkt)
-}
-
-func verifyChecksum(hdr header.UDP, pkt *stack.PacketBuffer) bool {
-    if !pkt.RXTransportChecksumValidated && (hdr.Checksum() != 0 || pkt.NetworkProtocolNumber == header.IPv6ProtocolNumber) {
-        netHdr := pkt.Network()
-        checksum := header.PseudoHeaderChecksum(udp.ProtocolNumber, netHdr.DestinationAddress(), netHdr.SourceAddress(), hdr.Length())
-        for _, v := range pkt.Data().Views() {
-            checksum = header.Checksum(v, checksum)
-        }
-        return hdr.CalculateChecksum(checksum) == 0xffff
-    }
-    return true
+func (c *udpConnection) ID() *stack.TransportEndpointID {
+    return c.id
 }
 

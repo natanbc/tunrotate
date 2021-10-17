@@ -2,24 +2,31 @@ package conn
 
 import (
     "net"
+    "time"
+
+    "gvisor.dev/gvisor/pkg/log"
     "gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
-type UDPPacket interface {
-    Data() []byte
+const udpConnectTimeout = 5 * time.Second
+const udpWaitTimeout = 5 * time.Second
 
-    Drop()
-
-    ID() *stack.TransportEndpointID
-
-    LocalAddr() net.Addr
-
-    RemoteAddr() net.Addr
-
-    WriteBack([]byte, net.Addr) (int, error)
+type UDPConnection interface {
+	net.Conn
+	ID() *stack.TransportEndpointID
 }
 
-func handleUDP(_ UDPPacket) {
+func handleUDP(localConn UDPConnection) {
+    defer localConn.Close()
 
+    id := localConn.ID()
+
+    targetConn, err := dial("udp", udpConnectTimeout, net.IP(id.LocalAddress), id.LocalPort)
+    if err != nil {
+        log.Warningf("[UDP] Dial %v:%v: %v", id.LocalAddress, id.LocalPort, err)
+        return
+    }
+
+    relay(localConn, targetConn, udpWaitTimeout)
 }
 

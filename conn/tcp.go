@@ -1,25 +1,15 @@
 package conn
 
 import (
-    "context"
-    "io"
     "net"
-    "sync"
     "time"
 
     "gvisor.dev/gvisor/pkg/log"
     "gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
-const bufferSize = 20 << 10;
-const connectTimeout = 5 * time.Second
-const waitTimeout = 5 * time.Second
-
-var buffers = sync.Pool {
-    New: func() interface {} {
-        return make([]byte, bufferSize)
-    },
-}
+const tcpConnectTimeout = 5 * time.Second
+const tcpWaitTimeout = 5 * time.Second
 
 type TCPConnection interface {
 	net.Conn
@@ -31,46 +21,13 @@ func handleTCP(localConn TCPConnection) {
 
     id := localConn.ID()
 
-    targetConn, err := dial(net.IP(id.LocalAddress), id.LocalPort)
+    targetConn, err := dial("tcp", tcpConnectTimeout, net.IP(id.LocalAddress), id.LocalPort)
 
     if err != nil {
         log.Warningf("[TCP] Dial %v:%v: %v", id.LocalAddress, id.LocalPort, err)
         return
     }
 
-    relay(localConn, targetConn)
-}
-
-func dial(ip net.IP, port uint16) (net.Conn, error) {
-    ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
-    defer cancel()
-    return DialTCP(ctx, ip, port)
-}
-
-func relay(left, right net.Conn) {
-    wg := sync.WaitGroup {}
-    wg.Add(2)
-
-    go func() {
-        defer wg.Done()
-        buf := buffers.Get().([]byte)
-        defer buffers.Put(buf)
-
-        io.CopyBuffer(right, left, buf)
-
-        right.SetReadDeadline(time.Now().Add(waitTimeout))
-    }()
-
-    go func() {
-        defer wg.Done()
-        buf := buffers.Get().([]byte)
-        defer buffers.Put(buf)
-
-        io.CopyBuffer(left, right, buf)
-
-        left.SetReadDeadline(time.Now().Add(waitTimeout))
-    }()
-
-    wg.Wait()
+    relay(localConn, targetConn, tcpWaitTimeout)
 }
 
