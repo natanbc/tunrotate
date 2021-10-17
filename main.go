@@ -61,14 +61,11 @@ func getTunDevice() (int, uint32) {
         checkErr(err, "[!] Unable to listen on unix socket")
         checkErr(os.Chmod(path, 0700), "[!] Unable to chmod unix socket")
 
-        cmd := exec.Command("./tunopen/tunopen", fmt.Sprintf("%d", *targetPid), *tunDevice, path)
+        cmd := exec.Command("./tunopen/tunopen", "tun", fmt.Sprintf("%d", *targetPid), *tunDevice, path)
         cmd.Stdin = nil
         cmd.Stdout = nil
         cmd.Stderr = os.Stderr
         checkErr(cmd.Start(), "[!] Unable to start tunopen helper process")
-        go func() {
-            checkErr(cmd.Wait(), "[!] tunopen error")
-        }()
 
         uc, err := ul.AcceptUnix()
         checkErr(err, "[!] Unable to accept unix connection")
@@ -90,6 +87,8 @@ func getTunDevice() (int, uint32) {
         fd := fds[0]
         mtu := binary.LittleEndian.Uint32(msg)
         checkErr(unix.SetNonblock(fd, true), "[!] Unable to set tun device in non blocking mode")
+
+        checkErr(cmd.Wait(), "[!] tunopen error")
 
         return fd, mtu
     }
@@ -127,6 +126,7 @@ func checkErr(err error, msg string, args ...interface{}) {
 
 func main() {
     cmdDoneCh := make(chan struct{}, 1)
+    setupDone := make(chan struct{}, 1)
     sigCh := make(chan os.Signal, 1)
     signal.Notify(sigCh, syscall.SIGINT)
     signal.Notify(sigCh, syscall.SIGTERM)
@@ -143,17 +143,30 @@ func main() {
     }
 
     if len(flag.Args()) > 0 {
+        readPipe, writePipe, err := os.Pipe()
+        checkErr(err, "[!] Failed to create wait pipe")
+
         //create process in new user and network namespace
         var args []string
         args = append(args, "--map-root-user", "--net")
+        args = append(args, "./tunopen/tunopen", "wait", "/proc/self/fd/3")
         args = append(args, flag.Args()...)
         cmd := exec.Command("unshare", args...)
         cmd.Stdin = os.Stdin
         cmd.Stdout = os.Stdout
         cmd.Stderr = os.Stderr
+        cmd.ExtraFiles = []*os.File { readPipe }
         checkErr(cmd.Start(), "[!] Unable to start process")
         go func() {
+            <-setupDone
+            writePipe.Write([]byte{0})
+            writePipe.Close()
+
             cmd.Wait()
+
+            if cmd.ProcessState.ExitCode() != 0 {
+                os.Exit(cmd.ProcessState.ExitCode())
+            }
             cmdDoneCh<- struct{}{}
         }()
         *targetPid = cmd.Process.Pid
@@ -174,6 +187,9 @@ func main() {
     checkErr(err, "[!] Unable to create stack")
 
     log.Infof("Started!")
+
+    setupDone <- struct{}{}
+
     select {
     case <-sigCh:
         break;

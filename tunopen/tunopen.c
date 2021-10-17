@@ -57,6 +57,14 @@ static void create_tun(int target_pid, const char* name, int* tun, int* mtu) {
     check(ioctl(sock, SIOCGIFMTU, &ifr), "Unable to get mtu");
     close(sock);
     *mtu = ifr.ifr_mtu;
+
+    // doing it with rtentry didn't work because why would it
+    sprintf(buf, "ip addr add 10.0.0.2/24 dev %s", name);
+    system(buf);
+    sprintf(buf, "ip link set %s up", name);
+    system(buf);
+    sprintf(buf, "ip route add default via 10.0.0.1");
+    system(buf);
 }
 
 static int connect_parent(const char* socket_path) {
@@ -105,19 +113,45 @@ static void send_tun_mtu(int sock, int tun, int mtu) {
     check(sendmsg(sock, &msg, 0), "Unable to send fd/mtu pair");
 }
 
-int main(int argc, char* argv[]) {
-    if(argc != 4) {
-        fprintf(stderr, "usage: %s <pid> <tun name> <path to unix socket>\n", argv[0]);
-        fflush(stderr);
-        return 1;
-    }
-    int sock = connect_parent(argv[3]);
+static void do_tun(int pid, const char* name, const char* socket_path) {
+    int sock = connect_parent(socket_path);
 
-    int pid = atoi(argv[1]);
     int tun, mtu;
-    create_tun(pid, argv[2], &tun, &mtu);
+    create_tun(pid, name, &tun, &mtu);
  
     send_tun_mtu(sock, tun, mtu);
     close(sock);
     close(tun);
 }
+
+static void do_wait(const char* pipe_path, char* const* argv) {
+    int pipe = open(pipe_path, O_RDONLY);
+    char buf[128];
+    int r = read(pipe, buf, sizeof buf);
+    close(pipe);
+    execvp(argv[0], argv);
+}
+
+static void usage(const char* name) {
+    fprintf(stderr, "usage:\n");
+    fprintf(stderr, "    %s tun  <pid> <tun name> <path to unix socket>\n", name);
+    fprintf(stderr, "    %s wait <path to pipe> <target program> [args]\n", name);
+    fflush(stderr);
+    exit(1);
+}
+
+int main(int argc, char* argv[]) {
+    if(argc <= 1) {
+        usage(argv[0]);
+    }
+    if(strcmp(argv[1], "tun") == 0) {
+        if(argc != 5) usage(argv[0]);
+        do_tun(atoi(argv[2]), argv[3], argv[4]);
+    } else if(strcmp(argv[1], "wait") == 0) {
+        if(argc < 4) usage(argv[0]);
+        do_wait(argv[2], &argv[3]);
+    } else {
+        usage(argv[0]);
+    }
+}
+
