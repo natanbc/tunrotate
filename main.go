@@ -140,7 +140,7 @@ func configureNetwork(c *netlinkfd.Conn) error {
         return err
     }
 
-    c.NewAddress(&rtnetlink.AddressMessage {
+    if err := c.NewAddress(&rtnetlink.AddressMessage {
         Family:       uint8(unix.AF_INET),
         PrefixLength: 24,
         Scope:        unix.RT_SCOPE_UNIVERSE,
@@ -150,7 +150,22 @@ func configureNetwork(c *netlinkfd.Conn) error {
             Local:     net.ParseIP("10.0.0.2"),
             Broadcast: net.ParseIP("10.0.0.255"),
         },
-    })
+    }); err != nil {
+        return err
+    }
+
+    if err := c.NewAddress(&rtnetlink.AddressMessage {
+        Family:       uint8(unix.AF_INET6),
+        PrefixLength: 64,
+        Scope:        unix.RT_SCOPE_UNIVERSE,
+        Index:        idx,
+        Attributes:   &rtnetlink.AddressAttributes {
+            Address:   net.ParseIP("fc00:0:0:6969::2"),
+            Local:     net.ParseIP("fc00:0:0:6969::2"),
+        },
+    }); err != nil {
+        return err
+    }
 
     link, err := c.GetLink(idx)
     if err != nil {
@@ -175,6 +190,19 @@ func configureNetwork(c *netlinkfd.Conn) error {
         Type:       uint8(unix.RTN_UNICAST),
         Attributes: rtnetlink.RouteAttributes {
             Gateway: net.ParseIP("10.0.0.1"),
+        },
+    }); err != nil {
+        return err
+    }
+
+    if err := c.AddRoute(&rtnetlink.RouteMessage {
+        Family:     uint8(unix.AF_INET6),
+        Table:      uint8(unix.RT_TABLE_MAIN),
+        Protocol:   uint8(unix.RTPROT_BOOT),
+        Scope:      uint8(unix.RT_SCOPE_UNIVERSE),
+        Type:       uint8(unix.RTN_UNICAST),
+        Attributes: rtnetlink.RouteAttributes {
+            Gateway: net.ParseIP("fc00:0:0:6969::1"),
         },
     }); err != nil {
         return err
