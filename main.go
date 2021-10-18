@@ -16,9 +16,6 @@ import (
 
     "golang.org/x/sys/unix"
 
-    specs "github.com/opencontainers/runtime-spec/specs-go"
-    "gvisor.dev/gvisor/runsc/specutils"
-
     "gvisor.dev/gvisor/pkg/log"
     "gvisor.dev/gvisor/pkg/tcpip/link/fdbased"
     "gvisor.dev/gvisor/pkg/tcpip/link/rawfile"
@@ -37,19 +34,37 @@ var (
     tunDevice = flag.String("tun-device", "tun0", "tun device to use")
 )
 
-func enterNetNS(path string) (func(), error) {
-    runtime.LockOSThread()
-    restoreNS, err := specutils.ApplyNS(specs.LinuxNamespace {
-        Type: specs.NetworkNamespace,
-        Path: path,
-    })
-    if err != nil {
-        runtime.UnlockOSThread()
-        return nil, fmt.Errorf("unable to enter net namespace %q: %v", path, err)
+func setNetNS(fd uintptr) error {
+    if _, _, err := syscall.RawSyscall(unix.SYS_SETNS, fd, syscall.CLONE_NEWNET, 0); err != 0 {
+        return err
     }
-    return func() {
-        restoreNS()
+    return nil
+}
+
+func enterNetNS(path string) (func(), error) {
+    newNS, err := os.Open(path)
+    if err != nil {
+        return nil, err
+    }
+    defer newNS.Close()
+
+    oldNS, err := os.Open("/proc/self/ns/net")
+    if err != nil {
+        return nil, err
+    }
+
+    runtime.LockOSThread()
+    if err := setNetNS(newNS.Fd()); err != nil {
         runtime.UnlockOSThread()
+        return nil, fmt.Errorf("Unable to enter network namespace: %v", err)
+    }
+
+    return func() {
+        defer runtime.UnlockOSThread()
+        defer oldNS.Close()
+        if err := setNetNS(oldNS.Fd()); err != nil {
+            panic(fmt.Sprintf("Unable to restore network namespace: %v", err))
+        }
     }, nil
 }
 
