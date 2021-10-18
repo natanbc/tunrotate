@@ -24,6 +24,9 @@ import (
     "gvisor.dev/gvisor/pkg/tcpip/link/rawfile"
     "gvisor.dev/gvisor/pkg/tcpip/link/tun"
 
+    "github.com/jsimonetti/rtnetlink"
+
+    "github.com/natanbc/tunrotate/netlinkfd"
     "github.com/natanbc/tunrotate/stack"
 )
 
@@ -131,6 +134,55 @@ func getTunDevice() (int, uint32, int) {
     return fd, mtu, netlinkFd
 }
 
+func configureNetwork(c *netlinkfd.Conn) error {
+    idx, err := c.GetInterfaceIndex(*tunDevice)
+    if err != nil {
+        return err
+    }
+
+    c.NewAddress(&rtnetlink.AddressMessage {
+        Family:       uint8(unix.AF_INET),
+        PrefixLength: 24,
+        Scope:        unix.RT_SCOPE_UNIVERSE,
+        Index:        idx,
+        Attributes:   &rtnetlink.AddressAttributes {
+            Address:   net.ParseIP("10.0.0.2"),
+            Local:     net.ParseIP("10.0.0.2"),
+            Broadcast: net.ParseIP("10.0.0.255"),
+        },
+    })
+
+    link, err := c.GetLink(idx)
+    if err != nil {
+        return err
+    }
+
+    if err := c.SetLink(&rtnetlink.LinkMessage {
+        Family: link.Family,
+        Type:   link.Type,
+        Index:  idx,
+        Flags:  unix.IFF_UP,
+        Change: unix.IFF_UP,
+    }); err != nil {
+        return err
+    }
+
+    if err := c.AddRoute(&rtnetlink.RouteMessage {
+        Family:     uint8(unix.AF_INET),
+        Table:      uint8(unix.RT_TABLE_MAIN),
+        Protocol:   uint8(unix.RTPROT_BOOT),
+        Scope:      uint8(unix.RT_SCOPE_UNIVERSE),
+        Type:       uint8(unix.RTN_UNICAST),
+        Attributes: rtnetlink.RouteAttributes {
+            Gateway: net.ParseIP("10.0.0.1"),
+        },
+    }); err != nil {
+        return err
+    }
+
+    return nil
+}
+
 func checkErr(err error, msg string, args ...interface{}) {
     if err != nil {
         fmt.Fprintf(os.Stderr, msg, args)
@@ -194,7 +246,12 @@ func main() {
         time.Sleep(500 * time.Millisecond)
     }
 
-    fd, mtu, _ := getTunDevice()
+    fd, mtu, netlinkFd := getTunDevice()
+
+    netlink, err := netlinkfd.NewFromFD(netlinkFd)
+    checkErr(err, "[!] Unable to connect to netlink")
+    checkErr(configureNetwork(netlink), "[!] Unable to configure device addresses")
+    netlink.Close()
 
     ep, err := fdbased.New(&fdbased.Options {
         MTU: mtu,

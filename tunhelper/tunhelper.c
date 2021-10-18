@@ -60,14 +60,6 @@ static void create_tun(int target_pid, const char* name, int* tun, int* mtu, int
     *mtu = ifr.ifr_mtu;
 
     *netlink = check(socket(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE), "Unable to create netlink socket");
-
-    // doing it with rtentry didn't work because why would it
-    sprintf(buf, "ip addr add 10.0.0.2/24 dev %s", name);
-    system(buf);
-    sprintf(buf, "ip link set %s up", name);
-    system(buf);
-    sprintf(buf, "ip route add default via 10.0.0.1");
-    system(buf);
 }
 
 static void send_fds(int sock, int tun, int mtu, int netlink) {
@@ -110,6 +102,7 @@ static void do_tun(int pid, const char* name, int socket_fd) {
     send_fds(socket_fd, tun, mtu, netlink);
     close(socket_fd);
     close(tun);
+    close(netlink);
 }
 
 static void write_str(int fd, const char* str, const char* err) {
