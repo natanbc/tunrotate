@@ -23,16 +23,19 @@ import (
 
     "github.com/jsimonetti/rtnetlink"
 
+    "github.com/natanbc/tunrotate/config"
     "github.com/natanbc/tunrotate/netlinkfd"
     "github.com/natanbc/tunrotate/stack"
 )
 
 var (
-    logLevel  = flag.String("loglevel", "info", "Log level [debug|info|warn]")
-    netNsPath = flag.String("netns", "", "path to network namespace (/run/netns/{name} or /proc/{pid}/ns/net). Needs root privileges")
-    targetPid = flag.Int("pid", 0, "pid of a process in the wanted network namespace. Does not need root privileges")
-    tunDevice = flag.String("tun-device", "tun0", "tun device to use")
+    logLevel   = flag.String("loglevel", "info", "Log level [debug|info|warn]")
+    netNsPath  = flag.String("netns", "", "path to network namespace (/run/netns/{name} or /proc/{pid}/ns/net). Needs root privileges")
+    targetPid  = flag.Int("pid", 0, "pid of a process in the wanted network namespace. Does not need root privileges")
+    tunDevice  = flag.String("tun-device", "tun0", "tun device to use")
+    configPath = flag.String("config-path", "", "configuration file to use")
 )
+var cfg *config.Config
 
 func setNetNS(fd uintptr) error {
     if _, _, err := syscall.RawSyscall(unix.SYS_SETNS, fd, syscall.CLONE_NEWNET, 0); err != 0 {
@@ -197,30 +200,68 @@ func configureNetwork(c *netlinkfd.Conn) error {
         return err
     }
 
-    if err := c.AddRoute(&rtnetlink.RouteMessage {
-        Family:     uint8(unix.AF_INET),
-        Table:      uint8(unix.RT_TABLE_MAIN),
-        Protocol:   uint8(unix.RTPROT_BOOT),
-        Scope:      uint8(unix.RT_SCOPE_UNIVERSE),
-        Type:       uint8(unix.RTN_UNICAST),
-        Attributes: rtnetlink.RouteAttributes {
-            Gateway: net.ParseIP("10.0.0.1"),
-        },
-    }); err != nil {
-        return err
+    routes := make([]config.Route, 0)
+    if cfg == nil || cfg.DefaultRoutes {
+        allV4 := config.IPBlock {
+            IP:   net.ParseIP("0.0.0.0").To4(),
+            Mask: net.CIDRMask(0, 32),
+        }
+        allV6 := config.IPBlock {
+            IP:   net.ParseIP("::"),
+            Mask: net.CIDRMask(0, 128),
+        }
+        routes = append(
+            routes,
+            config.Route { Destination: allV4, Via: config.ViaTun },
+            config.Route { Destination: allV6, Via: config.ViaTun },
+        )
+    }
+    if cfg != nil {
+        routes = append(routes, cfg.ExtraRoutes...)
     }
 
-    if err := c.AddRoute(&rtnetlink.RouteMessage {
-        Family:     uint8(unix.AF_INET6),
-        Table:      uint8(unix.RT_TABLE_MAIN),
-        Protocol:   uint8(unix.RTPROT_BOOT),
-        Scope:      uint8(unix.RT_SCOPE_UNIVERSE),
-        Type:       uint8(unix.RTN_UNICAST),
-        Attributes: rtnetlink.RouteAttributes {
-            Gateway: net.ParseIP("fc00:0:0:6969::1"),
-        },
-    }); err != nil {
-        return err
+    toNetlink := func(r config.Route) *rtnetlink.RouteMessage {
+        var family int
+        if r.Destination.IP.To4() == nil {
+            family = unix.AF_INET6
+        } else {
+            family = unix.AF_INET
+        }
+
+        msg := &rtnetlink.RouteMessage {
+            Family:     uint8(family),
+            Table:      uint8(unix.RT_TABLE_MAIN),
+            Protocol:   uint8(unix.RTPROT_BOOT),
+            Scope:      uint8(unix.RT_SCOPE_UNIVERSE),
+            Type:       uint8(unix.RTN_UNICAST),
+        }
+
+        switch r.Via {
+        case config.ViaTun:
+            msg.Attributes = rtnetlink.RouteAttributes {
+                OutIface: idx,
+            }
+        case config.ViaAddress:
+            msg.Attributes = rtnetlink.RouteAttributes {
+                Gateway: r.Source,
+            }
+        default:
+            panic("Unhandled via")
+        }
+
+        dstLength, _ := r.Destination.Mask.Size()
+        if dstLength != 0 {
+            msg.Attributes.Dst = r.Destination.IP
+            msg.DstLength = uint8(dstLength)
+        }
+
+        return msg
+    }
+
+    for _, r := range routes {
+        if err := c.AddRoute(toNetlink(r)); err != nil {
+            return err
+        }
     }
 
     return nil
@@ -250,6 +291,13 @@ func main() {
     default:
         fmt.Fprintf(os.Stderr, "[!] Invalid log level: %s", *logLevel)
         os.Exit(1)
+    }
+
+    if *configPath != "" {
+        log.Infof("Loading configuration from %s", *configPath)
+        c, err := config.From(*configPath)
+        checkErr(err, "[!] Unable to parse config")
+        cfg = c
     }
 
     if len(flag.Args()) > 0 {
