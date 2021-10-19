@@ -7,6 +7,7 @@ import (
     "math/rand"
     "net"
     "os"
+    "time"
 )
 
 const (
@@ -71,6 +72,10 @@ type policyJson struct {
 
 type IP net.IP
 type IPBlock net.IPNet
+
+func init() {
+    rand.Seed(time.Now().UnixNano())
+}
 
 func From(src string) (*Config, error) {
     file, err := os.Open(src)
