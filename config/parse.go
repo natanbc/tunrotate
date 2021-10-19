@@ -86,6 +86,10 @@ func (p *Policy) UnmarshalJSON(data []byte) error {
             protocols |= ProtocolUDP6
         case "udp":
             protocols |= ProtocolUDP
+        case "ipv4":
+            protocols |= ProtocolIPv4
+        case "ipv6":
+            protocols |= ProtocolIPv6
         case "any":
             protocols |= ProtocolAny
         default:
