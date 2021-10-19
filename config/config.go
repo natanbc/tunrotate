@@ -120,6 +120,11 @@ func (c *Config) Apply(iface string, proto int) (bool, net.IP) {
                 blocks = p.AddressesV4
                 bytes = 4
             }
+
+            if len(blocks) == 0 {
+                continue
+            }
+
             block := blocks[rand.Intn(len(blocks))]
             ip := block.IP
 

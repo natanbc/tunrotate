@@ -24,6 +24,7 @@ import (
     "github.com/jsimonetti/rtnetlink"
 
     "github.com/natanbc/tunrotate/config"
+    "github.com/natanbc/tunrotate/conn"
     "github.com/natanbc/tunrotate/netlinkfd"
     "github.com/natanbc/tunrotate/stack"
 )
@@ -298,6 +299,7 @@ func main() {
         c, err := config.From(*configPath)
         checkErr(err, "[!] Unable to parse config")
         cfg = c
+        conn.SetConfig(c)
     }
 
     if len(flag.Args()) > 0 {
