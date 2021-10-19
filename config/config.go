@@ -131,7 +131,7 @@ func (c *Config) Apply(iface string, proto int) (bool, net.IP) {
             }
 
             block := blocks[rand.Intn(len(blocks))]
-            ip := block.IP
+            ip := append([]byte(nil), block.IP...)
 
             bits := make([]byte, bytes)
             rand.Read(bits)
