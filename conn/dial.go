@@ -69,6 +69,9 @@ func chooseBindAddress(dst net.IP, network string) (bool, net.IP) {
          }
          allow, ip := cfg.Apply(iface.Name, proto)
          if allow {
+             if ip == nil {
+                 ip = preferred
+             }
              log.Debugf("Using local address %s/%s", network, ip)
          } else {
              log.Debugf("Blocking connection")
