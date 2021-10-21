@@ -27,6 +27,7 @@ func handleTCP(localConn TCPConnection) {
         log.Warningf("[TCP] Dial %v:%v: %v", id.LocalAddress, id.LocalPort, err)
         return
     }
+    defer targetConn.Close()
 
     relay(localConn, targetConn, tcpWaitTimeout)
 }

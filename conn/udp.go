@@ -26,6 +26,7 @@ func handleUDP(localConn UDPConnection) {
         log.Warningf("[UDP] Dial %v:%v: %v", id.LocalAddress, id.LocalPort, err)
         return
     }
+    defer targetConn.Close()
 
     relay(localConn, targetConn, udpWaitTimeout)
 }
