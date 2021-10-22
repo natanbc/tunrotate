@@ -30,5 +30,6 @@ func handleTCP(localConn TCPConnection) {
     defer targetConn.Close()
 
     relay(localConn, targetConn, tcpWaitTimeout)
+    log.Debugf("[TCP] Connection %v:%v->%v:%v closed", id.RemoteAddress, id.RemotePort, id.LocalAddress, id.LocalPort)
 }
 

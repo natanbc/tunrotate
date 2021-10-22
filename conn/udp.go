@@ -29,5 +29,6 @@ func handleUDP(localConn UDPConnection) {
     defer targetConn.Close()
 
     relay(localConn, targetConn, udpWaitTimeout)
+    log.Debugf("[UDP] Connection %v:%v->%v:%v closed", id.RemoteAddress, id.RemotePort, id.LocalAddress, id.LocalPort)
 }
 
