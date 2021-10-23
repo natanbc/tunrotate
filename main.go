@@ -7,6 +7,7 @@ import (
     "os"
     "os/exec"
     "os/signal"
+    "path/filepath"
     "runtime"
     "strings"
     "sync"
@@ -70,10 +71,28 @@ func enterNetNS(path string) (func(), error) {
     }, nil
 }
 
+func tunhelper(args ...string) (*exec.Cmd, error) {
+    if lp, err := exec.LookPath("tunhelper"); err == nil {
+        return exec.Command(lp, args...), nil
+    }
+    self, err := os.Executable()
+    if err != nil {
+        return nil, fmt.Errorf("Unable to find tunhelper executable: os.Executable() failed")
+    }
+    dir := filepath.Dir(self)
+    if info, err := os.Stat(filepath.Join(dir, "tunhelper")); err == nil && !info.IsDir() {
+        return exec.Command(filepath.Join(dir, "tunhelper"), args...), nil
+    }
+    if info, err := os.Stat(filepath.Join(dir, "tunhelper/tunhelper")); err == nil && !info.IsDir() {
+        return exec.Command(filepath.Join(dir, "tunhelper/tunhelper"), args...), nil
+    }
+    return nil, fmt.Errorf("Unable to find tunhelper executable: no tunhelper or tunhelper/tunhelper executable next to %s", self)
+}
+
 //returns (tun, netlink)
 func getTunDevice() (int, int) {
     if *targetPid != 0 {
-        log.Infof("Using tunopen on pid %d", *targetPid)
+        log.Infof("Using tunhelper on pid %d", *targetPid)
 
         sockFds, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_STREAM|syscall.SOCK_NONBLOCK, 0);
         checkErr(err, "[!] Unable to create socket pair")
@@ -81,12 +100,13 @@ func getTunDevice() (int, int) {
         parentSocket := os.NewFile(uintptr(sockFds[0]), "sockerpair/parent")
         childSocket  := os.NewFile(uintptr(sockFds[1]), "sockerpair/child")
 
-        cmd := exec.Command("./tunhelper/tunhelper", "tun", fmt.Sprintf("%d", *targetPid), *tunDevice, "3")
+        cmd, err := tunhelper("tun", fmt.Sprintf("%d", *targetPid), *tunDevice, "3")
+        checkErr(err, "[!] Unable to start tunhelper process")
         cmd.Stdin = nil
         cmd.Stdout = nil
         cmd.Stderr = os.Stderr
         cmd.ExtraFiles = []*os.File { childSocket }
-        checkErr(cmd.Start(), "[!] Unable to start tunopen helper process")
+        checkErr(cmd.Start(), "[!] Unable to start tunhelper process")
 
         wg := sync.WaitGroup {}
         wg.Add(1)
@@ -308,12 +328,13 @@ func main() {
         var args []string
         args = append(args, "unshare", "3", "4")
         args = append(args, flag.Args()...)
-        cmd := exec.Command("./tunhelper/tunhelper", args...)
+        cmd, err := tunhelper(args...)
+        checkErr(err, "[!] Unable to start target process")
         cmd.Stdin = os.Stdin
         cmd.Stdout = os.Stdout
         cmd.Stderr = os.Stderr
         cmd.ExtraFiles = []*os.File { unshareWritePipe, waitReadPipe }
-        checkErr(cmd.Start(), "[!] Unable to start process")
+        checkErr(cmd.Start(), "[!] Unable to start target process")
 
         _, err = unshareReadPipe.Read(make([]byte, 16))
         checkErr(err, "[!] Unable to read from unshare pipe")
