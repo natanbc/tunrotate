@@ -1,7 +1,6 @@
 package main
 
 import (
-    "encoding/binary"
     "flag"
     "fmt"
     "net"
@@ -12,13 +11,11 @@ import (
     "strings"
     "sync"
     "syscall"
-    "time"
 
     "golang.org/x/sys/unix"
 
     "gvisor.dev/gvisor/pkg/log"
     "gvisor.dev/gvisor/pkg/tcpip/link/fdbased"
-    "gvisor.dev/gvisor/pkg/tcpip/link/rawfile"
     "gvisor.dev/gvisor/pkg/tcpip/link/tun"
 
     "github.com/jsimonetti/rtnetlink"
@@ -35,6 +32,7 @@ var (
     targetPid  = flag.Int("pid", 0, "pid of a process in the wanted network namespace. Does not need root privileges")
     tunDevice  = flag.String("tun-device", "tun0", "tun device to use")
     configPath = flag.String("config-path", "", "configuration file to use")
+    tunMtu     = flag.Uint("mtu", 65535, "mtu to set for the device")
 )
 var cfg *config.Config
 
@@ -72,8 +70,8 @@ func enterNetNS(path string) (func(), error) {
     }, nil
 }
 
-//returns (tun, mtu, netlink)
-func getTunDevice() (int, uint32, int) {
+//returns (tun, netlink)
+func getTunDevice() (int, int) {
     if *targetPid != 0 {
         log.Infof("Using tunopen on pid %d", *targetPid)
 
@@ -93,9 +91,9 @@ func getTunDevice() (int, uint32, int) {
         wg := sync.WaitGroup {}
         wg.Add(1)
 
-        //separate goroutine so tunopen errors get caught and the process exits
+        //separate goroutine so tunhelper errors get caught and the process exits
         go func() {
-            checkErr(cmd.Wait(), "[!] tunopen error")
+            checkErr(cmd.Wait(), "[!] tunhelper error")
             wg.Done()
         }()
 
@@ -117,14 +115,13 @@ func getTunDevice() (int, uint32, int) {
 
         fd := fds[0]
         netlinkFd := fds[1]
-        mtu := binary.LittleEndian.Uint32(msg)
         checkErr(unix.SetNonblock(fd, true), "[!] Unable to set tun device in non blocking mode")
 
-        //wait for tunopen to finish
+        //wait for tunhelper to finish
         wg.Wait()
 
 
-        return fd, mtu, netlinkFd
+        return fd, netlinkFd
     }
 
     var restore func()
@@ -138,10 +135,6 @@ func getTunDevice() (int, uint32, int) {
     fd, err := tun.Open(*tunDevice)
     checkErr(err, "[!] open(%s)", *tunDevice)
 
-    mtu, err := rawfile.GetMTU(*tunDevice)
-    checkErr(err, "[!] GetMTU(%s)", *tunDevice)
-    log.Infof("MTU(%s) = %v", *tunDevice, mtu)
-
     netlinkFd, err := syscall.Socket(syscall.AF_NETLINK, syscall.SOCK_DGRAM, syscall.NETLINK_ROUTE)
     checkErr(err, "[!] Unable to open netlink socket")
 
@@ -150,7 +143,7 @@ func getTunDevice() (int, uint32, int) {
         restore()
     }
 
-    return fd, mtu, netlinkFd
+    return fd, netlinkFd
 }
 
 func configureNetwork(c *netlinkfd.Conn) error {
@@ -192,11 +185,14 @@ func configureNetwork(c *netlinkfd.Conn) error {
     }
 
     if err := c.SetLink(&rtnetlink.LinkMessage {
-        Family: link.Family,
-        Type:   link.Type,
-        Index:  idx,
-        Flags:  unix.IFF_UP,
-        Change: unix.IFF_UP,
+        Family:     link.Family,
+        Type:       link.Type,
+        Index:      idx,
+        Flags:      unix.IFF_UP,
+        Change:     unix.IFF_UP,
+        Attributes: &rtnetlink.LinkAttributes {
+            MTU: uint32(*tunMtu),
+        },
     }); err != nil {
         return err
     }
@@ -271,7 +267,7 @@ func configureNetwork(c *netlinkfd.Conn) error {
 func checkErr(err error, msg string, args ...interface{}) {
     if err != nil {
         fmt.Fprintf(os.Stderr, msg, args)
-        fmt.Fprintf(os.Stderr, ": %v", err)
+        fmt.Fprintf(os.Stderr, ": %v\n", err)
         os.Exit(1)
     }
 }
@@ -335,11 +331,9 @@ func main() {
             cmdDoneCh<- struct{}{}
         }()
         *targetPid = cmd.Process.Pid
-        //give it time to enter the new namespaces
-        time.Sleep(500 * time.Millisecond)
     }
 
-    fd, mtu, netlinkFd := getTunDevice()
+    fd, netlinkFd := getTunDevice()
 
     netlink, err := netlinkfd.NewFromFD(netlinkFd)
     checkErr(err, "[!] Unable to connect to netlink")
@@ -347,7 +341,7 @@ func main() {
     netlink.Close()
 
     ep, err := fdbased.New(&fdbased.Options {
-        MTU: mtu,
+        MTU: uint32(*tunMtu),
         FDs: []int{fd},
         RXChecksumOffload: true,
     })

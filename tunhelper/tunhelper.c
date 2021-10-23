@@ -24,7 +24,7 @@ static int check(int v, const char* msg) {
     return v;
 }
 
-static void create_tun(int target_pid, const char* name, int* tun, int* mtu, int* netlink) {
+static void create_tun(int target_pid, const char* name, int* tun, int* netlink) {
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
 
@@ -54,18 +54,13 @@ static void create_tun(int target_pid, const char* name, int* tun, int* mtu, int
     *tun = check(open("/dev/net/tun", O_RDWR), "Unable to open /dev/net/tun");
     check(ioctl(*tun, TUNSETIFF, &ifr), "Unable to set ifr");
 
-    int sock = socket(AF_UNIX, SOCK_DGRAM, 0);
-    check(ioctl(sock, SIOCGIFMTU, &ifr), "Unable to get mtu");
-    close(sock);
-    *mtu = ifr.ifr_mtu;
-
     *netlink = check(socket(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE), "Unable to create netlink socket");
 }
 
-static void send_fds(int sock, int tun, int mtu, int netlink) {
+static void send_fds(int sock, int tun, int netlink) {
     struct iovec iov = {
-        .iov_base = &mtu,
-        .iov_len = sizeof(mtu),
+        .iov_base = "1",
+        .iov_len = 1,
     };
 
     union {
@@ -96,10 +91,10 @@ static void send_fds(int sock, int tun, int mtu, int netlink) {
 }
 
 static void do_tun(int pid, const char* name, int socket_fd) {
-    int tun, mtu, netlink;
-    create_tun(pid, name, &tun, &mtu, &netlink);
+    int tun, netlink;
+    create_tun(pid, name, &tun, &netlink);
  
-    send_fds(socket_fd, tun, mtu, netlink);
+    send_fds(socket_fd, tun, netlink);
     close(socket_fd);
     close(tun);
     close(netlink);
@@ -140,7 +135,11 @@ static void do_unshare(int unshared_fd, int wait_fd, char* const* argv) {
     close(unshared_fd);
 
     char buf[128];
-    check(read(wait_fd, buf, sizeof buf), "Failed to read from wait pipe");
+    int r = check(read(wait_fd, buf, sizeof buf), "Failed to read from wait pipe");
+    if(r == 0) {
+        fprintf(stderr, "Empty read from wait pipe, assuming setup failed\n");
+        exit(1);
+    }
     close(wait_fd);
 
     execvp(argv[0], argv);
