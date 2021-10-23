@@ -121,6 +121,29 @@ static void setgroups_deny() {
     close(fd);
 }
 
+// https://github.com/rootless-containers/slirp4netns/pull/133
+static void adjust_rmem() {
+    FILE* f = fopen("/proc/sys/net/ipv4/tcp_rmem", "r");
+    check(f == NULL ? -1 : 0, "Failed to open tcp_rmem for reading");
+
+    size_t min, def, max;
+    if(fscanf(f, "%zu %zu %zu", &min, &def, &max) != 3) {
+        check(-1, "Failed to parse tcp_rmem");
+    }
+    fclose(f);
+
+    if(def <= 87380) return;
+    def = 87380;
+
+    f = fopen("/proc/sys/net/ipv4/tcp_rmem", "w");
+    check(f == NULL ? -1 : 0, "Failed to open tcp_rmem for writing");
+
+    if(fprintf(f, "%zu %zu %zu\n", min, def, max) < 0) {
+        check(-1, "Failed to write to tcp_rmem");
+    }
+    fclose(f);
+}
+
 static void do_unshare(int unshared_fd, int wait_fd, char* const* argv) {
     uid_t real_euid = geteuid();
     gid_t real_egid = getegid();
@@ -133,6 +156,8 @@ static void do_unshare(int unshared_fd, int wait_fd, char* const* argv) {
 
     check(write(unshared_fd, "ok\n", 3), "Failed to write to unshared pipe");
     close(unshared_fd);
+
+    adjust_rmem();
 
     char buf[128];
     int r = check(read(wait_fd, buf, sizeof buf), "Failed to read from wait pipe");
