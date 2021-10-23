@@ -32,7 +32,7 @@ var (
     targetPid  = flag.Int("pid", 0, "pid of a process in the wanted network namespace. Does not need root privileges")
     tunDevice  = flag.String("tun-device", "tun0", "tun device to use")
     configPath = flag.String("config-path", "", "configuration file to use")
-    tunMtu     = flag.Uint("mtu", 65535, "mtu to set for the device")
+    tunMtu     = flag.Uint("mtu", 65520, "mtu to set for the device")
 )
 var cfg *config.Config
 
