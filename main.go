@@ -12,12 +12,12 @@ import (
     "strings"
     "sync"
     "syscall"
+    "unsafe"
 
     "golang.org/x/sys/unix"
 
     "gvisor.dev/gvisor/pkg/log"
     "gvisor.dev/gvisor/pkg/tcpip/link/fdbased"
-    "gvisor.dev/gvisor/pkg/tcpip/link/tun"
 
     "github.com/jsimonetti/rtnetlink"
 
@@ -34,6 +34,7 @@ var (
     tunDevice  = flag.String("tun-device", "tun0", "tun device to use")
     configPath = flag.String("config-path", "", "configuration file to use")
     tunMtu     = flag.Uint("mtu", 65520, "mtu to set for the device")
+    tunQueues  = flag.Uint("queues", 8, "number of tun queues")
 )
 var cfg *config.Config
 
@@ -90,7 +91,12 @@ func tunhelper(args ...string) (*exec.Cmd, error) {
 }
 
 //returns (tun, netlink)
-func getTunDevice() (int, int) {
+func getTunDevice() ([]int, int) {
+    if *tunQueues == 0 || *tunQueues > 252 {
+        fmt.Fprintf(os.Stderr, "[!] Number of queues should be in the range [1, 252]\n")
+        os.Exit(1)
+    }
+
     if *targetPid != 0 {
         log.Infof("Using tunhelper on pid %d", *targetPid)
 
@@ -100,7 +106,7 @@ func getTunDevice() (int, int) {
         parentSocket := os.NewFile(uintptr(sockFds[0]), "sockerpair/parent")
         childSocket  := os.NewFile(uintptr(sockFds[1]), "sockerpair/child")
 
-        cmd, err := tunhelper("tun", fmt.Sprintf("%d", *targetPid), *tunDevice, "3")
+        cmd, err := tunhelper("tun", fmt.Sprintf("%d", *targetPid), *tunDevice, "3", fmt.Sprintf("%d", *tunQueues))
         checkErr(err, "[!] Unable to start tunhelper process")
         cmd.Stdin = nil
         cmd.Stdout = nil
@@ -121,7 +127,7 @@ func getTunDevice() (int, int) {
         checkErr(err, "[!] Unable to create FileConn")
         uc := fc.(*net.UnixConn)
 
-        msg, oob := make([]byte, 4), make([]byte, 128)
+        msg, oob := make([]byte, 4), make([]byte, (*tunQueues + 1) * 4 + 16)
         _, oobn, _, _, err := uc.ReadMsgUnix(msg, oob)
         checkErr(err, "[!] Unable to read message from unix socket")
 
@@ -133,15 +139,17 @@ func getTunDevice() (int, int) {
 
         uc.Close()
 
-        fd := fds[0]
-        netlinkFd := fds[1]
-        checkErr(unix.SetNonblock(fd, true), "[!] Unable to set tun device in non blocking mode")
+        tunFds := fds[0:*tunQueues]
+        netlinkFd := fds[*tunQueues]
+        for _, fd := range tunFds {
+            checkErr(unix.SetNonblock(fd, true), "[!] Unable to set tun device in non blocking mode")
+        }
 
         //wait for tunhelper to finish
         wg.Wait()
 
 
-        return fd, netlinkFd
+        return tunFds, netlinkFd
     }
 
     var restore func()
@@ -152,8 +160,26 @@ func getTunDevice() (int, int) {
         checkErr(err, "[!] Failed to join netns %s", *netNsPath)
     }
 
-    fd, err := tun.Open(*tunDevice)
-    checkErr(err, "[!] open(%s)", *tunDevice)
+    fds := make([]int, *tunQueues)
+
+    var ifr struct {
+		name  [16]byte
+		flags uint16
+		_     [22]byte
+	}
+    copy(ifr.name[:], *tunDevice)
+    ifr.flags = unix.IFF_TUN | unix.IFF_NO_PI | unix.IFF_MULTI_QUEUE
+
+    for i, _ := range fds {
+        fd, err := unix.Open("/dev/net/tun", unix.O_RDWR, 0)
+        checkErr(err, "[!] Unable to create tun device")
+        _, _, errno := unix.Syscall(unix.SYS_IOCTL, uintptr(fd), unix.TUNSETIFF, uintptr(unsafe.Pointer(&ifr)))
+        if errno != 0 {
+            checkErr(errno, "[!] Unable to set IFF")
+        }
+        checkErr(unix.SetNonblock(fd, true), "[!] Unable to set nonblocking mode")
+        fds[i] = fd
+    }
 
     netlinkFd, err := syscall.Socket(syscall.AF_NETLINK, syscall.SOCK_DGRAM, syscall.NETLINK_ROUTE)
     checkErr(err, "[!] Unable to open netlink socket")
@@ -163,7 +189,7 @@ func getTunDevice() (int, int) {
         restore()
     }
 
-    return fd, netlinkFd
+    return fds, netlinkFd
 }
 
 func configureNetwork(c *netlinkfd.Conn) error {
@@ -354,7 +380,8 @@ func main() {
         *targetPid = cmd.Process.Pid
     }
 
-    fd, netlinkFd := getTunDevice()
+    tunFds, netlinkFd := getTunDevice()
+    log.Infof("Using %d queues", len(tunFds))
 
     netlink, err := netlinkfd.NewFromFD(netlinkFd)
     checkErr(err, "[!] Unable to connect to netlink")
@@ -362,8 +389,8 @@ func main() {
     netlink.Close()
 
     ep, err := fdbased.New(&fdbased.Options {
+        FDs: tunFds,
         MTU: uint32(*tunMtu),
-        FDs: []int{fd},
         RXChecksumOffload: true,
     })
     checkErr(err, "[!] Unable to create endpoint")
