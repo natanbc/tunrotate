@@ -127,7 +127,7 @@ func getTunDevice() ([]int, int) {
         checkErr(err, "[!] Unable to create FileConn")
         uc := fc.(*net.UnixConn)
 
-        msg, oob := make([]byte, 4), make([]byte, (*tunQueues + 1) * 4 + 16)
+        msg, oob := make([]byte, 4), make([]byte, unix.CmsgSpace(int((*tunQueues + 1) * 4)))
         _, oobn, _, _, err := uc.ReadMsgUnix(msg, oob)
         checkErr(err, "[!] Unable to read message from unix socket")
 
