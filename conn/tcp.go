@@ -8,12 +8,12 @@ import (
     "gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
-const tcpConnectTimeout = 20 * time.Second
-const tcpWaitTimeout = 15 * time.Second
+var TcpConnectTimeout = 10 * time.Second
+var TcpWaitTimeout = 5 * time.Second
 
 type TCPConnection interface {
-	net.Conn
-	ID() *stack.TransportEndpointID
+    net.Conn
+    ID() *stack.TransportEndpointID
 }
 
 func handleTCP(localConn TCPConnection) {
@@ -21,7 +21,7 @@ func handleTCP(localConn TCPConnection) {
 
     id := localConn.ID()
 
-    targetConn, err := dial("tcp", tcpConnectTimeout, net.IP(id.LocalAddress), id.LocalPort)
+    targetConn, err := dial("tcp", TcpConnectTimeout, net.IP(id.LocalAddress), id.LocalPort)
 
     if err != nil {
         log.Warningf("[TCP] Dial %v:%v: %v", id.LocalAddress, id.LocalPort, err)
@@ -29,7 +29,7 @@ func handleTCP(localConn TCPConnection) {
     }
     defer targetConn.Close()
 
-    relay(localConn, targetConn, tcpWaitTimeout)
-    log.Debugf("[TCP] Connection %v:%v->%v:%v closed", id.RemoteAddress, id.RemotePort, id.LocalAddress, id.LocalPort)
+    relay(localConn, targetConn, TcpWaitTimeout)
+    log.Debugf("[TCP] Closed connection %v:%v->%v:%v", id.RemoteAddress, id.RemotePort, id.LocalAddress, id.LocalPort)
 }
 

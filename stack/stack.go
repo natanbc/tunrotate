@@ -81,6 +81,7 @@ func New(ep stack.LinkEndpoint) (*Stack, error) {
             Conn: gonet.NewUDPConn(s.Stack, &wq, ep),
             id:   &id,
         }
+
         conn.NewUDP(connection)
     })
     s.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)

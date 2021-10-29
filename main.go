@@ -12,6 +12,7 @@ import (
     "strings"
     "sync"
     "syscall"
+    "time"
     "unsafe"
 
     "golang.org/x/sys/unix"
@@ -35,8 +36,40 @@ var (
     configPath = flag.String("config-path", "", "configuration file to use")
     tunMtu     = flag.Uint("mtu", 65520, "mtu to set for the device")
     tunQueues  = flag.Uint("queues", 8, "number of tun queues")
+    fileLimit  = flag.Uint64("file-limit", 0, "soft open file descriptor to set, sets soft limit to hard limit if 0, min(file-limit, hard-limit) otherwise")
 )
 var cfg *config.Config
+
+func init() {
+    flag.DurationVar(&conn.UdpConnectTimeout, "udp-connect-timeout", 5 * time.Second, "How long to wait for an UDP connection before failing")
+    flag.DurationVar(&conn.UdpWaitTimeout, "udp-wait-timeout", 5 * time.Second, "How long to wait for data before giving up")
+    flag.DurationVar(&conn.TcpConnectTimeout, "tcp-connect-timeout", 10 * time.Second, "How long to wait for a TCP connection before failing")
+    flag.DurationVar(&conn.TcpWaitTimeout, "tcp-wait-timeout", 5 * time.Second, "How long to wait for data before giving up")
+}
+
+func setOpenFileLimit() {
+    var rLimit syscall.Rlimit
+    err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+    if err != nil {
+        log.Warningf("Unable to get current rlimit")
+        return
+    }
+    rLimit.Cur = rLimit.Max
+    if *fileLimit != 0 && *fileLimit < rLimit.Cur {
+        rLimit.Cur = *fileLimit
+    }
+    err = syscall.Setrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+    if err != nil {
+        log.Warningf("Unable to set rlimit")
+        return
+    }
+    err = syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
+    if err != nil {
+        log.Warningf("Unable to get updated rlimit")
+        return
+    }
+    log.Infof("Set open file limit to %d", rLimit.Cur)
+}
 
 func setNetNS(fd uintptr) error {
     if _, _, err := syscall.RawSyscall(unix.SYS_SETNS, fd, syscall.CLONE_NEWNET, 0); err != 0 {
@@ -335,6 +368,8 @@ func main() {
         fmt.Fprintf(os.Stderr, "[!] Invalid log level: %s", *logLevel)
         os.Exit(1)
     }
+
+    setOpenFileLimit()
 
     if *configPath != "" {
         log.Infof("Loading configuration from %s", *configPath)
