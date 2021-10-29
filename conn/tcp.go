@@ -14,6 +14,7 @@ var TcpWaitTimeout = 5 * time.Second
 type TCPConnection interface {
     net.Conn
     ID() *stack.TransportEndpointID
+    Connected()
 }
 
 func handleTCP(localConn TCPConnection) {
@@ -27,6 +28,7 @@ func handleTCP(localConn TCPConnection) {
         log.Warningf("[TCP] Dial %v:%v: %v", id.LocalAddress, id.LocalPort, err)
         return
     }
+    localConn.Connected()
     defer targetConn.Close()
 
     relay(localConn, targetConn, TcpWaitTimeout)

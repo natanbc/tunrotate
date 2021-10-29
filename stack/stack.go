@@ -3,6 +3,8 @@ package stack
 import (
     "fmt"
     "net"
+    "sync"
+    "time"
 
     "gvisor.dev/gvisor/pkg/log"
     "gvisor.dev/gvisor/pkg/tcpip"
@@ -55,12 +57,18 @@ func New(ep stack.LinkEndpoint) (*Stack, error) {
             r.Complete(true)
             return
         }
-        r.Complete(false)
 
         connection := &tcpConnection {
             Conn: gonet.NewTCPConn(&wq, ep),
             id: &id,
+            request: r,
+            start: time.Now(),
         }
+
+        entry := &waiter.Entry {
+            Callback: connection,
+        }
+        wq.EventRegister(entry, waiter.EventErr | waiter.EventHUp)
 
         conn.NewTCP(connection)
     })
@@ -101,11 +109,33 @@ func New(ep stack.LinkEndpoint) (*Stack, error) {
 
 type tcpConnection struct {
     net.Conn
+    start time.Time
     id *stack.TransportEndpointID
+    requestLock sync.Mutex
+    request *tcp.ForwarderRequest
 }
 
 func (c *tcpConnection) ID() *stack.TransportEndpointID {
 	return c.id
+}
+
+func (c *tcpConnection) completeReq(rst bool) {
+    log.Debugf("Completing tcp connection %v (rst=%v) after %v", c.id, rst, time.Now().Sub(c.start))
+    c.requestLock.Lock()
+    defer c.requestLock.Unlock()
+
+    if c.request != nil {
+        c.request.Complete(rst)
+        c.request = nil
+    }
+}
+
+func (c *tcpConnection) Connected() {
+    c.completeReq(false)
+}
+
+func (c *tcpConnection) Callback(_ *waiter.Entry, _ waiter.EventMask) {
+    c.completeReq(true)
 }
 
 type udpConnection struct {
