@@ -11,16 +11,13 @@ import (
 var TcpConnectTimeout = 10 * time.Second
 var TcpWaitTimeout = 5 * time.Second
 
-type TCPConnection interface {
-    net.Conn
+type TCPConnectionRequest interface {
+    ConnectLocal() (net.Conn, error)
     ID() *stack.TransportEndpointID
-    Connected()
 }
 
-func handleTCP(localConn TCPConnection) {
-    defer localConn.Close()
-
-    id := localConn.ID()
+func handleTCP(connReq TCPConnectionRequest) {
+    id := connReq.ID()
 
     targetConn, err := dial("tcp", TcpConnectTimeout, net.IP(id.LocalAddress), id.LocalPort)
 
@@ -28,8 +25,15 @@ func handleTCP(localConn TCPConnection) {
         log.Warningf("[TCP] Dial %v:%v: %v", id.LocalAddress, id.LocalPort, err)
         return
     }
-    localConn.Connected()
     defer targetConn.Close()
+
+    localConn, err := connReq.ConnectLocal()
+    if err != nil {
+        log.Warningf("[TCP] Failed to connect local side %v: %v", id, err)
+        return
+    }
+
+    defer localConn.Close()
 
     relay(localConn, targetConn, TcpWaitTimeout)
     log.Debugf("[TCP] Closed connection %v:%v->%v:%v", id.RemoteAddress, id.RemotePort, id.LocalAddress, id.LocalPort)

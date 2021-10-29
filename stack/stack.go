@@ -3,8 +3,8 @@ package stack
 import (
     "fmt"
     "net"
-    "sync"
     "time"
+    "sync"
 
     "gvisor.dev/gvisor/pkg/log"
     "gvisor.dev/gvisor/pkg/tcpip"
@@ -47,28 +47,14 @@ func New(ep stack.LinkEndpoint) (*Stack, error) {
     })
 
     tcpForwarder := tcp.NewForwarder(s.Stack, 0, 2048, func(r *tcp.ForwarderRequest) {
-        var wq waiter.Queue
         id := r.ID()
         log.Debugf("tcp connection: %v", id)
 
-        ep, err := r.CreateEndpoint(&wq)
-        if err != nil {
-            log.Warningf("unable to create tcp endpoint: %v", err)
-            r.Complete(true)
-            return
-        }
-
         connection := &tcpConnection {
-            Conn: gonet.NewTCPConn(&wq, ep),
             id: &id,
             request: r,
             start: time.Now(),
         }
-
-        entry := &waiter.Entry {
-            Callback: connection,
-        }
-        wq.EventRegister(entry, waiter.EventErr | waiter.EventHUp)
 
         conn.NewTCP(connection)
     })
@@ -108,7 +94,6 @@ func New(ep stack.LinkEndpoint) (*Stack, error) {
 }
 
 type tcpConnection struct {
-    net.Conn
     start time.Time
     id *stack.TransportEndpointID
     requestLock sync.Mutex
@@ -119,23 +104,27 @@ func (c *tcpConnection) ID() *stack.TransportEndpointID {
 	return c.id
 }
 
-func (c *tcpConnection) completeReq(rst bool) {
-    log.Debugf("Completing tcp connection %v (rst=%v) after %v", c.id, rst, time.Now().Sub(c.start))
+func (c *tcpConnection) ConnectLocal() (net.Conn, error) {
     c.requestLock.Lock()
     defer c.requestLock.Unlock()
 
-    if c.request != nil {
-        c.request.Complete(rst)
-        c.request = nil
+    r := c.request
+    if r == nil {
+        panic(fmt.Sprintf("Attempt to create multiple local connections for %v", c.id))
     }
-}
+    c.request = nil
 
-func (c *tcpConnection) Connected() {
-    c.completeReq(false)
-}
+    log.Debugf("Completing tcp connection %v after %v", c.id, time.Now().Sub(c.start))
 
-func (c *tcpConnection) Callback(_ *waiter.Entry, _ waiter.EventMask) {
-    c.completeReq(true)
+    var wq waiter.Queue
+    ep, err := r.CreateEndpoint(&wq)
+    if err != nil {
+        r.Complete(true)
+        return nil, fmt.Errorf("Unable to create endpoint: %v", err)
+    }
+    r.Complete(false)
+
+    return gonet.NewTCPConn(&wq, ep), nil
 }
 
 type udpConnection struct {

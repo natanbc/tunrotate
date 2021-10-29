@@ -1,9 +1,9 @@
 package conn
 
-var tcpQueue = make(chan TCPConnection)
+var tcpQueue = make(chan TCPConnectionRequest)
 var udpQueue = make(chan UDPConnection)
 
-func NewTCP(c TCPConnection) {
+func NewTCP(c TCPConnectionRequest) {
     tcpQueue <- c
 }
 
