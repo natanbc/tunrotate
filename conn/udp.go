@@ -8,8 +8,8 @@ import (
     "gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
-const udpConnectTimeout = 5 * time.Second
-const udpWaitTimeout = 5 * time.Second
+const udpConnectTimeout = 20 * time.Second
+const udpWaitTimeout = 15 * time.Second
 
 type UDPConnection interface {
 	net.Conn

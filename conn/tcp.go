@@ -8,8 +8,8 @@ import (
     "gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
-const tcpConnectTimeout = 5 * time.Second
-const tcpWaitTimeout = 5 * time.Second
+const tcpConnectTimeout = 20 * time.Second
+const tcpWaitTimeout = 15 * time.Second
 
 type TCPConnection interface {
 	net.Conn
