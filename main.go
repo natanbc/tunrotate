@@ -41,10 +41,40 @@ var (
 var cfg *config.Config
 
 func init() {
-    flag.DurationVar(&conn.UdpConnectTimeout, "udp-connect-timeout", 5 * time.Second, "How long to wait for an UDP connection before failing")
-    flag.DurationVar(&conn.UdpWaitTimeout, "udp-wait-timeout", 5 * time.Second, "How long to wait for data before giving up")
-    flag.DurationVar(&conn.TcpConnectTimeout, "tcp-connect-timeout", 10 * time.Second, "How long to wait for a TCP connection before failing")
-    flag.DurationVar(&conn.TcpWaitTimeout, "tcp-wait-timeout", 5 * time.Second, "How long to wait for data before giving up")
+    flag.DurationVar(&conn.TcpConnectTimeout, "tcp-connect-timeout", 60 * time.Second, "How long to wait for a TCP connection before failing")
+    flag.DurationVar(&conn.TcpWaitTimeout, "tcp-wait-timeout", 60 * time.Second, "How long to wait for data before giving up")
+    flag.DurationVar(&conn.UdpConnectTimeout, "udp-connect-timeout", 20 * time.Second, "How long to wait for an UDP connection before failing")
+    flag.DurationVar(&conn.UdpWaitTimeout, "udp-wait-timeout", 20 * time.Second, "How long to wait for data before giving up")
+}
+
+func setFlagsFromConfig() {
+    if cfg == nil {
+        return
+    }
+
+    wasFlagPassed := func(name string) bool {
+        found := false
+        flag.Visit(func(f *flag.Flag) {
+            if f.Name == name {
+                found = true
+            }
+        })
+        return found
+    }
+
+    maybeSet := func(v *time.Duration, name string, configValue config.Duration) {
+        if wasFlagPassed(name) {
+            return
+        }
+        if configValue > config.Duration(0) {
+            *v = time.Duration(configValue)
+        }
+    }
+
+    maybeSet(&conn.TcpConnectTimeout, "tcp-connect-timeout", cfg.TcpConnectTimeout)
+    maybeSet(&conn.TcpWaitTimeout, "tcp-wait-timeout", cfg.TcpWaitTimeout)
+    maybeSet(&conn.UdpConnectTimeout, "udp-connect-timeout", cfg.UdpConnectTimeout)
+    maybeSet(&conn.UdpWaitTimeout, "udp-wait-timeout", cfg.UdpWaitTimeout)
 }
 
 func setOpenFileLimit() {
@@ -378,6 +408,8 @@ func main() {
         cfg = c
         conn.SetConfig(c)
     }
+
+    setFlagsFromConfig()
 
     if len(flag.Args()) > 0 {
         unshareReadPipe, unshareWritePipe, err := os.Pipe()

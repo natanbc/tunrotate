@@ -5,7 +5,21 @@ import (
     "fmt"
     "net"
     "strings"
+    "time"
 )
+
+func (d *Duration) UnmarshalJSON(data []byte) error {
+    var v string
+    if err := json.Unmarshal(data, &v); err != nil {
+        return err
+    }
+    dur, err := time.ParseDuration(v)
+    if err != nil {
+        return err
+    }
+    *d = Duration(dur)
+    return nil
+}
 
 func (r *Route) UnmarshalJSON(data []byte) error {
     j := routeJson {}

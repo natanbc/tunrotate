@@ -30,7 +30,11 @@ Run `tunrotate <command> [args]`.
     "AllowUnknown": bool,
     "DefaultRoutes": bool,
     "ExtraRoutes": [Route],
-    "Policy": [Policy]
+    "Policy": [Policy],
+    "TcpConnectTimeout": [Duration],
+    "TcpWaitTimeout": [Duration],
+    "UdpConnectTimeout": [Duration],
+    "UdpWaitTimeout": [Duration]
 }
 ```
 
@@ -38,6 +42,10 @@ Run `tunrotate <command> [args]`.
 - DefaultRoutes: whether default routes for 0.0.0.0/0 and ::/0 should be set inside the namespace. Defaults to `true`.
 - ExtraRoutes: additional routes to configure inside the namespace. Defaults to `[]`.
 - Policy: policies to determine where to send packets from inside the namespace. Defaults to `[]`, which simply acts as if any connections made inside the namespace were made by the tunrotate process if AllowUnknown is true, otherwise always drops all connections.
+- TcpConnectTimeout: how long to wait for a TCP connection to be established before giving up. Defaults to 60s. Can be overriden by command line flags.
+- TcpWaitTimeout: how long to wait for data (on either direction) of a TCP connection before giving up. Defaults to 60s. Can be overriden by command line flags.
+- UdpConnectTimeout: how long to wait for a response UDP packet before giving up. Defaults to 20s. Can be overriden by command line flags.
+- UdpWaitTimeout: how long to wait for UDP packets (on either direction) before giving up. Defaults to 20s. Can be overriden by command line flags.
 
 ### Route objects
 

@@ -35,11 +35,17 @@ const (
     ViaTun
 )
 
+type Duration time.Duration
+
 type Config struct {
     AllowUnknown bool
     DefaultRoutes bool
     ExtraRoutes []Route
     Policy []Policy
+    TcpConnectTimeout Duration
+    TcpWaitTimeout Duration
+    UdpConnectTimeout Duration
+    UdpWaitTimeout Duration
 }
 
 type Route struct {
