@@ -60,6 +60,25 @@ func New(ep stack.LinkEndpoint) (*Stack, error) {
     })
     s.SetTransportProtocolHandler(tcp.ProtocolNumber, tcpForwarder.HandlePacket)
 
+    {
+        opt := tcpip.TCPSACKEnabled(true)
+        s.SetTransportProtocolOption(tcp.ProtocolNumber, &opt)
+    }
+    {
+        opt := tcpip.TCPModerateReceiveBufferOption(true)
+        s.SetTransportProtocolOption(tcp.ProtocolNumber, &opt)
+    }
+
+    bufSize := 4 * 1024 * 1024
+    {
+        opt := tcpip.TCPReceiveBufferSizeRangeOption { Min: 1, Default: bufSize, Max: bufSize }
+        s.SetTransportProtocolOption(tcp.ProtocolNumber, &opt)
+    }
+    {
+        opt := tcpip.TCPSendBufferSizeRangeOption { Min: 1, Default: bufSize, Max: bufSize }
+        s.SetTransportProtocolOption(tcp.ProtocolNumber, &opt)
+    }
+
     udpForwarder := udp.NewForwarder(s.Stack, func(r *udp.ForwarderRequest) {
         var wq waiter.Queue
         id := r.ID()
