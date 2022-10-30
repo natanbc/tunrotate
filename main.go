@@ -37,6 +37,7 @@ var (
     tunMtu     = flag.Uint("mtu", 65520, "mtu to set for the device")
     tunQueues  = flag.Uint("queues", 8, "number of tun queues")
     fileLimit  = flag.Uint64("file-limit", 0, "soft open file descriptor to set, sets soft limit to hard limit if 0, min(file-limit, hard-limit) otherwise")
+    sameUser   = flag.Bool("same-user", false, "Whether or not the spawned task should see its UID as the same of the caller (even if false it still maps to the same UID)")
 )
 var cfg *config.Config
 
@@ -419,7 +420,7 @@ func main() {
 
         //create process in new user and network namespace
         var args []string
-        args = append(args, "unshare", "3", "4")
+        args = append(args, "unshare", fmt.Sprintf("%t", *sameUser), "3", "4")
         args = append(args, flag.Args()...)
         cmd, err := tunhelper(args...)
         checkErr(err, "[!] Unable to start target process")

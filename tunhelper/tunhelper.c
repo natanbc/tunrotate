@@ -7,6 +7,7 @@
 #include <linux/netlink.h>
 #include <sched.h>
 #include <stdalign.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -156,15 +157,15 @@ static void adjust_rmem() {
     fclose(f);
 }
 
-static void do_unshare(int unshared_fd, int wait_fd, char* const* argv) {
+static void do_unshare(bool same_user, int unshared_fd, int wait_fd, char* const* argv) {
     uid_t real_euid = geteuid();
     gid_t real_egid = getegid();
 
     check(unshare(CLONE_NEWUSER | CLONE_NEWNET), "Failed to unshare");
 
-    map_id("/proc/self/uid_map", 0, real_euid);
+    map_id("/proc/self/uid_map", same_user ? real_euid : 0, real_euid);
     setgroups_deny();
-    map_id("/proc/self/gid_map", 0, real_egid);
+    map_id("/proc/self/gid_map", same_user ? real_egid : 0, real_egid);
 
     check(write(unshared_fd, "ok\n", 3), "Failed to write to unshared pipe");
     close(unshared_fd);
@@ -185,7 +186,7 @@ static void do_unshare(int unshared_fd, int wait_fd, char* const* argv) {
 static void usage(const char* name) {
     fprintf(stderr, "usage:\n");
     fprintf(stderr, "    %s tun     <pid> <tun name> <socket fd> <number of queues>\n", name);
-    fprintf(stderr, "    %s unshare <unshare fd> <wait fd> <target program> [args]\n", name);
+    fprintf(stderr, "    %s unshare <same user> <unshare fd> <wait fd> <target program> [args]\n", name);
     fflush(stderr);
     exit(1);
 }
@@ -198,8 +199,8 @@ int main(int argc, char* argv[]) {
         if(argc != 6) usage(argv[0]);
         do_tun(atoi(argv[2]), argv[3], atoi(argv[4]), atoi(argv[5]));
     } else if(strcmp(argv[1], "unshare") == 0) {
-        if(argc < 4) usage(argv[0]);
-        do_unshare(atoi(argv[2]), atoi(argv[3]), &argv[4]);
+        if(argc < 5) usage(argv[0]);
+        do_unshare(!strcmp(argv[2], "true"), atoi(argv[3]), atoi(argv[4]), &argv[5]);
     } else {
         usage(argv[0]);
     }
