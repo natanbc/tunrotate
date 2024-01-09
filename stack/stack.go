@@ -91,7 +91,7 @@ func New(ep stack.LinkEndpoint) (*Stack, error) {
         }
 
         connection := &udpConnection {
-            Conn: gonet.NewUDPConn(s.Stack, &wq, ep),
+            Conn: gonet.NewUDPConn(&wq, ep),
             id:   &id,
         }
 

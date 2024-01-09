@@ -19,7 +19,7 @@ type TCPConnectionRequest interface {
 func handleTCP(connReq TCPConnectionRequest) {
     id := connReq.ID()
 
-    targetConn, err := dial("tcp", TcpConnectTimeout, net.IP(id.LocalAddress), id.LocalPort)
+    targetConn, err := dial("tcp", TcpConnectTimeout, net.ParseIP(id.LocalAddress.String()), id.LocalPort)
 
     if err != nil {
         log.Warningf("[TCP] Dial %v:%v: %v", id.LocalAddress, id.LocalPort, err)

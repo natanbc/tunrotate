@@ -21,7 +21,7 @@ func handleUDP(localConn UDPConnection) {
 
     id := localConn.ID()
 
-    targetConn, err := dial("udp", UdpConnectTimeout, net.IP(id.LocalAddress), id.LocalPort)
+    targetConn, err := dial("udp", UdpConnectTimeout, net.ParseIP(id.LocalAddress.String()), id.LocalPort)
     if err != nil {
         log.Warningf("[UDP] Dial %v:%v: %v", id.LocalAddress, id.LocalPort, err)
         return
